@@ -1,0 +1,263 @@
+# Expected verdicts for UPDATE / DELETE / TRUNCATE with the schema in schema.sql.
+# Fields: name, sql, expect, optional schema (default "schema.sql"; "" for none),
+# optional assume_no_triggers, optional pg = false to skip the Postgres check.
+
+[[case]]
+name = "set constant by key"
+sql = "UPDATE users SET status = 'active' WHERE id = 42"
+expect = "IDEMPOTENT"
+
+[[case]]
+name = "increment"
+sql = "UPDATE users SET logins = logins + 1 WHERE id = 42"
+expect = "NOT_IDEMPOTENT"
+
+[[case]]
+name = "clamp with LEAST"
+sql = "UPDATE users SET score = LEAST(score, 100)"
+expect = "IDEMPOTENT"
+
+[[case]]
+name = "clamp with CASE"
+sql = "UPDATE users SET score = CASE WHEN score > 100 THEN 100 ELSE score END"
+expect = "IDEMPOTENT"
+
+[[case]]
+name = "state transition"
+sql = "UPDATE users SET a = 2 WHERE a = 1"
+expect = "IDEMPOTENT"
+
+[[case]]
+name = "swap-like assignment"
+sql = "UPDATE users SET a = b, b = 5"
+expect = "NOT_IDEMPOTENT"
+
+[[case]]
+name = "chain transition"
+sql = "UPDATE users SET a = a + 1 WHERE a < 10"
+expect = "NOT_IDEMPOTENT"
+
+[[case]]
+name = "now() timestamp"
+sql = "UPDATE users SET updated_at = now() WHERE id = 1"
+expect = "NOT_IDEMPOTENT"
+
+[[case]]
+name = "CURRENT_TIMESTAMP"
+sql = "UPDATE users SET updated_at = CURRENT_TIMESTAMP"
+expect = "NOT_IDEMPOTENT"
+
+[[case]]
+name = "random uuid"
+sql = "UPDATE users SET token = gen_random_uuid()"
+expect = "NOT_IDEMPOTENT"
+
+[[case]]
+name = "set only if null"
+sql = "UPDATE users SET updated_at = now() WHERE updated_at IS NULL"
+expect = "IDEMPOTENT"
+
+[[case]]
+name = "delete by value"
+sql = "DELETE FROM users WHERE status = 'banned'"
+expect = "IDEMPOTENT"
+
+[[case]]
+name = "delete relative to now"
+sql = "DELETE FROM users WHERE updated_at < now()"
+expect = "NOT_IDEMPOTENT"
+
+[[case]]
+name = "division guarded by first run failing"
+sql = "UPDATE users SET score = 10 / a WHERE id = 1"
+expect = "IDEMPOTENT"
+
+[[case]]
+name = "guarded division in CASE"
+sql = "UPDATE users SET score = CASE WHEN a <> 0 THEN 10 / a ELSE 0 END"
+expect = "IDEMPOTENT"
+
+[[case]]
+name = "division that changes its own input"
+sql = "UPDATE users SET a = 100 / a WHERE a > 1"
+expect = "NOT_IDEMPOTENT"
+
+[[case]]
+name = "abs"
+sql = "UPDATE users SET a = abs(a)"
+expect = "IDEMPOTENT"
+
+[[case]]
+name = "negate"
+sql = "UPDATE users SET a = -a"
+expect = "NOT_IDEMPOTENT"
+
+[[case]]
+name = "append text"
+sql = "UPDATE users SET email = email || '!'"
+expect = "NOT_IDEMPOTENT"
+
+[[case]]
+name = "coalesce default"
+sql = "UPDATE users SET a = COALESCE(a, 0)"
+expect = "IDEMPOTENT"
+
+[[case]]
+name = "two statements, independent"
+sql = "UPDATE users SET a = 1 WHERE a IS NULL; UPDATE users SET b = a"
+expect = "IDEMPOTENT"
+
+[[case]]
+name = "two statements feeding each other"
+sql = "UPDATE users SET a = b; UPDATE users SET b = a + 1"
+expect = "NOT_IDEMPOTENT"
+
+[[case]]
+name = "delete then update"
+sql = "DELETE FROM users WHERE flag; UPDATE users SET flag = true WHERE a = 1"
+expect = "NOT_IDEMPOTENT"
+
+[[case]]
+name = "explicit transaction"
+sql = "BEGIN; DELETE FROM users WHERE id = 1; COMMIT"
+expect = "IDEMPOTENT"
+
+[[case]]
+name = "truncate"
+sql = "TRUNCATE users"
+expect = "IDEMPOTENT"
+
+[[case]]
+name = "narrowing into int2 errors on overflow"
+sql = "UPDATE users SET small = a WHERE id = 1"
+expect = "IDEMPOTENT"
+
+[[case]]
+name = "flip boolean"
+sql = "UPDATE users SET flag = NOT flag"
+expect = "NOT_IDEMPOTENT"
+
+[[case]]
+name = "set boolean"
+sql = "UPDATE users SET flag = true WHERE flag IS NOT TRUE"
+expect = "IDEMPOTENT"
+
+[[case]]
+name = "IN list"
+sql = "UPDATE users SET status = 'archived' WHERE status IN ('old', 'stale')"
+expect = "IDEMPOTENT"
+
+[[case]]
+name = "BETWEEN moving rows into range"
+sql = "UPDATE users SET a = a + 5 WHERE a BETWEEN 0 AND 10"
+expect = "NOT_IDEMPOTENT"
+
+[[case]]
+name = "NOT NULL violation makes first run fail"
+sql = "UPDATE users SET logins = NULL WHERE score > 5"
+expect = "IDEMPOTENT"
+
+[[case]]
+name = "NULLIF"
+sql = "UPDATE users SET a = NULLIF(a, 0)"
+expect = "IDEMPOTENT"
+
+[[case]]
+name = "GREATEST"
+sql = "UPDATE users SET a = GREATEST(a, b)"
+expect = "IDEMPOTENT"
+
+[[case]]
+name = "length of text"
+sql = "UPDATE users SET score = length(email)"
+expect = "IDEMPOTENT"
+
+[[case]]
+name = "returning star"
+sql = "UPDATE users SET status = 'x' WHERE id = 1 RETURNING *"
+expect = "IDEMPOTENT"
+
+[[case]]
+name = "alias"
+sql = "UPDATE users u SET status = 'x' WHERE u.id = 1"
+expect = "IDEMPOTENT"
+
+# ---- Cases that must come back UNKNOWN ----
+
+[[case]]
+name = "table with trigger"
+sql = "UPDATE audited SET n = 1"
+expect = "UNKNOWN"
+
+[[case]]
+name = "table with CHECK constraint: proof still possible"
+sql = "UPDATE checked SET n = 1 WHERE id = 1"
+expect = "IDEMPOTENT"
+
+[[case]]
+name = "table with CHECK constraint: counterexample not trusted"
+sql = "UPDATE checked SET n = n + 1"
+expect = "UNKNOWN"
+pg = false
+
+[[case]]
+name = "FK between two written tables"
+sql = "DELETE FROM parent WHERE id = 1; UPDATE child SET v = 1"
+expect = "UNKNOWN"
+
+[[case]]
+name = "view"
+sql = "UPDATE active_users SET a = 1"
+expect = "UNKNOWN"
+
+[[case]]
+name = "row level security"
+sql = "UPDATE secured SET n = 1"
+expect = "UNKNOWN"
+
+[[case]]
+name = "subquery on target table"
+sql = "DELETE FROM users WHERE id = (SELECT max(id) FROM users)"
+expect = "UNKNOWN"
+
+[[case]]
+name = "UPDATE FROM"
+sql = "UPDATE users SET a = parent.id FROM parent WHERE parent.name = users.status"
+expect = "UNKNOWN"
+
+[[case]]
+name = "numeric arithmetic is not modelled"
+sql = "UPDATE users SET price = price * 2"
+expect = "UNKNOWN"
+
+[[case]]
+name = "no schema"
+sql = "UPDATE users SET status = 'x'"
+schema = ""
+expect = "UNKNOWN"
+
+[[case]]
+name = "no schema, assumed plain tables"
+sql = "UPDATE users SET status = 'x' WHERE status = 'y'"
+schema = ""
+assume_no_triggers = true
+expect = "IDEMPOTENT"
+pg = false
+
+[[case]]
+name = "no schema, assumed plain tables, counterexample untrusted"
+sql = "UPDATE users SET status = status || 'x'"
+schema = ""
+assume_no_triggers = true
+expect = "UNKNOWN"
+pg = false
+
+[[case]]
+name = "unknown function"
+sql = "UPDATE users SET a = my_func(a)"
+expect = "UNKNOWN"
+
+[[case]]
+name = "parse error"
+sql = "UPDATE users SET"
+expect = "UNKNOWN"

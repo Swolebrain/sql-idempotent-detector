@@ -1,0 +1,51 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      SQL_IDEM_PG_URL: host=localhost port=5432 user=postgres password=postgres dbname=postgres
+      CVC5_VERSION: "1.4.2"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Install z3, cvc5 and libclang
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y z3 clang libclang-dev unzip
+          curl -sSL -o cvc5.zip "https://github.com/cvc5/cvc5/releases/download/cvc5-${CVC5_VERSION}/cvc5-Linux-x86_64-static.zip"
+          unzip -q cvc5.zip
+          sudo install -m 755 cvc5-Linux-x86_64-static/bin/cvc5 /usr/local/bin/cvc5
+          z3 --version
+          cvc5 --version | head -1
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Format
+        run: cargo fmt --check
+
+      - name: Unit and corpus tests
+        run: cargo test
+
+      - name: Soundness against Postgres
+        run: cargo test --test pg_soundness -- --ignored --nocapture

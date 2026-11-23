@@ -1,0 +1,243 @@
+# Expected verdicts for DDL, with the schema in schema.sql.
+# The Postgres soundness test runs these on many random catalogs (see
+# DDL_PERTURBATIONS in tests/pg_soundness.rs), so object names come from that pool:
+# t, people, v, i, t_a_i, mood, f, app, s, z, c, aa, a_pos, reporting.
+
+[[case]]
+name = "create table if not exists"
+sql = "CREATE TABLE IF NOT EXISTS t (id int PRIMARY KEY, a text)"
+expect = "IDEMPOTENT"
+
+[[case]]
+name = "create table"
+sql = "CREATE TABLE t (id int PRIMARY KEY, a text)"
+expect = "ERRORS_ON_RERUN"
+
+[[case]]
+name = "drop table if exists"
+sql = "DROP TABLE IF EXISTS t"
+expect = "IDEMPOTENT"
+
+[[case]]
+name = "drop table"
+sql = "DROP TABLE t"
+expect = "ERRORS_ON_RERUN"
+
+[[case]]
+name = "drop and recreate"
+sql = "DROP TABLE IF EXISTS t; CREATE TABLE t (id int)"
+expect = "IDEMPOTENT"
+
+[[case]]
+name = "named index if not exists"
+sql = "CREATE INDEX IF NOT EXISTS t_a_i ON users (a)"
+expect = "IDEMPOTENT"
+
+[[case]]
+name = "unnamed index duplicates itself"
+sql = "CREATE INDEX ON users (a)"
+expect = "NOT_IDEMPOTENT"
+
+[[case]]
+name = "named index"
+sql = "CREATE INDEX i ON users (a)"
+expect = "ERRORS_ON_RERUN"
+
+[[case]]
+name = "add column if not exists"
+sql = "ALTER TABLE users ADD COLUMN IF NOT EXISTS z int"
+expect = "IDEMPOTENT"
+
+[[case]]
+name = "add column"
+sql = "ALTER TABLE users ADD COLUMN z int"
+expect = "ERRORS_ON_RERUN"
+
+[[case]]
+name = "drop column if exists"
+sql = "ALTER TABLE users DROP COLUMN IF EXISTS z"
+expect = "IDEMPOTENT"
+
+[[case]]
+name = "drop column"
+sql = "ALTER TABLE audited DROP COLUMN n"
+expect = "ERRORS_ON_RERUN"
+
+[[case]]
+name = "drop column of a table a view depends on (view may use it)"
+sql = "ALTER TABLE users DROP COLUMN a"
+expect = "UNKNOWN"
+
+[[case]]
+name = "alter column type, table without dependents"
+sql = "ALTER TABLE audited ALTER COLUMN n TYPE int8"
+expect = "IDEMPOTENT"
+
+[[case]]
+name = "set default"
+sql = "ALTER TABLE users ALTER COLUMN a SET DEFAULT 5"
+expect = "IDEMPOTENT"
+
+[[case]]
+name = "set not null"
+sql = "ALTER TABLE users ALTER COLUMN a SET NOT NULL"
+expect = "IDEMPOTENT"
+
+[[case]]
+name = "drop not null"
+sql = "ALTER TABLE users ALTER COLUMN a DROP NOT NULL"
+expect = "IDEMPOTENT"
+
+[[case]]
+name = "alter column type"
+sql = "ALTER TABLE users ALTER COLUMN a TYPE int8"
+expect = "IDEMPOTENT"
+
+[[case]]
+name = "drop constraint if exists"
+sql = "ALTER TABLE users DROP CONSTRAINT IF EXISTS a_pos"
+expect = "IDEMPOTENT"
+
+[[case]]
+name = "rename column"
+sql = "ALTER TABLE users RENAME COLUMN a TO aa"
+expect = "ERRORS_ON_RERUN"
+
+[[case]]
+name = "rename table"
+sql = "ALTER TABLE users RENAME TO people"
+expect = "ERRORS_ON_RERUN"
+
+[[case]]
+name = "create or replace view"
+sql = "CREATE OR REPLACE VIEW v AS SELECT id FROM users"
+expect = "IDEMPOTENT"
+
+[[case]]
+name = "drop and recreate view"
+sql = "DROP VIEW IF EXISTS v; CREATE VIEW v AS SELECT id FROM users"
+expect = "IDEMPOTENT"
+
+[[case]]
+name = "create schema if not exists"
+sql = "CREATE SCHEMA IF NOT EXISTS app"
+expect = "IDEMPOTENT"
+
+[[case]]
+name = "create sequence if not exists"
+sql = "CREATE SEQUENCE IF NOT EXISTS s"
+expect = "IDEMPOTENT"
+
+[[case]]
+name = "create enum"
+sql = "CREATE TYPE mood AS ENUM ('a', 'b')"
+expect = "ERRORS_ON_RERUN"
+
+[[case]]
+name = "add enum value if not exists"
+sql = "ALTER TYPE mood ADD VALUE IF NOT EXISTS 'c'"
+expect = "IDEMPOTENT"
+
+[[case]]
+name = "create or replace function"
+sql = "CREATE OR REPLACE FUNCTION f(x int) RETURNS int LANGUAGE sql AS 'SELECT x'"
+expect = "IDEMPOTENT"
+
+[[case]]
+name = "drop function if exists"
+sql = "DROP FUNCTION IF EXISTS f(int)"
+expect = "IDEMPOTENT"
+
+[[case]]
+name = "comment"
+sql = "COMMENT ON TABLE users IS 'people'"
+expect = "IDEMPOTENT"
+
+[[case]]
+name = "grant"
+sql = "GRANT SELECT ON users TO reporting"
+expect = "IDEMPOTENT"
+
+[[case]]
+name = "revoke"
+sql = "REVOKE SELECT ON users FROM reporting"
+expect = "IDEMPOTENT"
+
+[[case]]
+name = "add column with volatile default, guarded"
+sql = "ALTER TABLE users ADD COLUMN IF NOT EXISTS c timestamptz DEFAULT now()"
+expect = "IDEMPOTENT"
+
+[[case]]
+name = "re-adding a column refills it with a new now()"
+sql = "ALTER TABLE audited DROP COLUMN IF EXISTS c; ALTER TABLE audited ADD COLUMN c timestamptz DEFAULT now()"
+expect = "NOT_IDEMPOTENT"
+
+[[case]]
+name = "re-adding a column of a table with dependent views"
+sql = "ALTER TABLE users DROP COLUMN IF EXISTS c; ALTER TABLE users ADD COLUMN c timestamptz DEFAULT now()"
+expect = "UNKNOWN"
+
+[[case]]
+name = "DDL next to DML on another table"
+sql = "CREATE TABLE IF NOT EXISTS t (id int); UPDATE users SET a = 1"
+expect = "IDEMPOTENT"
+
+[[case]]
+name = "typical migration"
+sql = """
+BEGIN;
+CREATE TABLE IF NOT EXISTS t (id int PRIMARY KEY, a text);
+CREATE INDEX IF NOT EXISTS t_a_i ON t (a);
+ALTER TABLE users ADD COLUMN IF NOT EXISTS z int;
+ALTER TABLE users ALTER COLUMN z SET DEFAULT 0;
+COMMENT ON TABLE t IS 'things';
+COMMIT;
+"""
+expect = "IDEMPOTENT"
+
+# ---- UNKNOWN: depends on things we cannot check ----
+
+[[case]]
+name = "plain create view: is the query valid?"
+sql = "CREATE VIEW v AS SELECT id FROM users"
+expect = "UNKNOWN"
+
+[[case]]
+name = "plain create function: is the body valid?"
+sql = "CREATE FUNCTION f(x int) RETURNS int LANGUAGE sql AS 'SELECT x'"
+expect = "UNKNOWN"
+
+[[case]]
+name = "check constraint: does existing data satisfy it?"
+sql = "ALTER TABLE users ADD CONSTRAINT a_pos CHECK (a > 0)"
+expect = "UNKNOWN"
+
+[[case]]
+name = "view over a table the script then changes"
+sql = "CREATE OR REPLACE VIEW v AS SELECT * FROM users; ALTER TABLE users ADD COLUMN IF NOT EXISTS z int"
+expect = "UNKNOWN"
+
+[[case]]
+name = "DDL and DML on the same table"
+sql = "ALTER TABLE users ADD COLUMN IF NOT EXISTS z int; UPDATE users SET a = 1"
+expect = "UNKNOWN"
+
+[[case]]
+name = "cascade"
+sql = "DROP TABLE IF EXISTS t CASCADE"
+expect = "UNKNOWN"
+
+[[case]]
+name = "no schema: event triggers not ruled out"
+sql = "CREATE TABLE IF NOT EXISTS t (id int)"
+schema = ""
+expect = "UNKNOWN"
+
+[[case]]
+name = "no schema, assumed no triggers"
+sql = "CREATE TABLE IF NOT EXISTS t (id int)"
+schema = ""
+assume_no_triggers = true
+expect = "IDEMPOTENT"
+pg = false

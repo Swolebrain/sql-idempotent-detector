@@ -1,0 +1,27 @@
+[package]
+name = "sql-idempotent-detector"
+version = "0.1.0"
+edition = "2021"
+description = "Decide whether a Postgres SQL statement is idempotent, using SMT solvers (Z3 + cvc5)"
+license = "MIT OR Apache-2.0"
+
+[lib]
+name = "sql_idem"
+path = "src/lib.rs"
+
+[[bin]]
+name = "sql-idem"
+path = "src/main.rs"
+
+[dependencies]
+pg_query = "18.1.0"
+clap = { version = "4", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+wait-timeout = "0.2.1"
+
+[dev-dependencies]
+assert_cmd = "2"
+postgres = "0.19"
+toml = "0.8"
